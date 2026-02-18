@@ -58,10 +58,55 @@ func callWebhook(webhookURL string) {
 	log.Printf("webhook: called %s → %d", webhookURL, resp.StatusCode)
 }
 
+// notifyThrottle suppresses repeated success notifications.
+// It sends freely for the first `window` consecutive successes, then
+// suppresses for the next `window`, then resets and sends one, and repeats.
+type notifyThrottle struct {
+	window      int
+	consecutive int // consecutive successes so far
+	suppressed  int // how many we have suppressed in the current suppression period
+}
+
+func newNotifyThrottle(window int) *notifyThrottle {
+	return &notifyThrottle{window: window}
+}
+
+// onSuccess returns true if a notification should be sent.
+func (t *notifyThrottle) onSuccess() bool {
+	t.consecutive++
+
+	if t.suppressed > 0 {
+		// Currently in suppression period.
+		t.suppressed++
+		if t.suppressed > t.window {
+			// Suppression period over: reset and send one.
+			t.consecutive = 0
+			t.suppressed = 0
+			return true
+		}
+		return false
+	}
+
+	if t.consecutive >= t.window {
+		// Just crossed the threshold: enter suppression.
+		t.suppressed = 1
+		return false
+	}
+
+	return true
+}
+
+// onFailure resets all state.
+func (t *notifyThrottle) onFailure() {
+	t.consecutive = 0
+	t.suppressed = 0
+}
+
 func main() {
 	interval          := flag.Duration("interval", 1*time.Minute, "retry interval (e.g. 20s, 1m, 2m30s)")
 	configFile        := flag.String("config", "config.yaml", "path to config file")
 	alwaysCallWebhook := flag.Bool("always-call-webhook", false, "call webhook on every check (useful for testing)")
+	notifyWindow      := flag.Int("notify-window", 5, "suppress notifications after this many consecutive successes; re-notify after the same count")
 	flag.Parse()
 
 	var cfg *Config
@@ -94,11 +139,11 @@ func main() {
 		browserCancel()
 	}()
 
-	log.Printf("retry interval: %s", *interval)
-	snipe(ctx, *interval, cfg, *alwaysCallWebhook)
+	log.Printf("retry interval: %s, notify window: %d", *interval, *notifyWindow)
+	snipe(ctx, *interval, cfg, *alwaysCallWebhook, newNotifyThrottle(*notifyWindow))
 }
 
-func snipe(ctx context.Context, retryEvery time.Duration, cfg *Config, alwaysCallWebhook bool) {
+func snipe(ctx context.Context, retryEvery time.Duration, cfg *Config, alwaysCallWebhook bool, throttle *notifyThrottle) {
 	for {
 		log.Printf("--- checking appointments ---")
 
@@ -132,6 +177,7 @@ func snipe(ctx context.Context, retryEvery time.Duration, cfg *Config, alwaysCal
 				return
 			}
 			log.Printf("error: %v — retrying in %s", err, retryEvery)
+			throttle.onFailure()
 		} else {
 			status := lastStatus.Load()
 			headline = strings.TrimSpace(headline)
@@ -140,20 +186,36 @@ func snipe(ctx context.Context, retryEvery time.Duration, cfg *Config, alwaysCal
 				log.Printf("headline: %q", headline)
 			}
 
-			is2xx := status >= 200 && status < 300
-			known := status == 429 || bodyID == "taken"
-			if !is2xx || known {
+			is2xx     := status >= 200 && status < 300
+			isWartung := strings.Contains(headline, "Wartung")
+			known     := status == 429 || bodyID == "taken" || isWartung
+			success   := is2xx && bodyID == "dayselect"
+
+			switch {
+			case success:
+				log.Printf("!!! APPOINTMENT FOUND — slots may be available !!!")
+				if throttle.onSuccess() {
+					fmt.Print("\a")
+					if cfg != nil && cfg.WebhookURL != "" {
+						callWebhook(cfg.WebhookURL)
+					}
+				} else {
+					log.Printf("notification suppressed (consecutive successes: %d)", throttle.consecutive)
+				}
+
+			case known:
 				log.Printf("no slots available, retrying in %s", retryEvery)
+				throttle.onFailure()
 				if alwaysCallWebhook && cfg != nil && cfg.WebhookURL != "" {
 					callWebhook(cfg.WebhookURL)
 				}
-			} else {
-				log.Printf("!!! APPOINTMENT FOUND — slots may be available !!!")
-				fmt.Print("\a")
-				if cfg != nil && cfg.WebhookURL != "" {
+
+			default:
+				log.Printf("unexpected page (id=%q), retrying in %s", bodyID, retryEvery)
+				throttle.onFailure()
+				if alwaysCallWebhook && cfg != nil && cfg.WebhookURL != "" {
 					callWebhook(cfg.WebhookURL)
 				}
-				// keep retrying — slot might still be there on next check
 			}
 		}
 
