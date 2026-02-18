@@ -83,7 +83,29 @@ Your phone should buzz within seconds.
 
 # test your webhook on every check (useful for verifying ntfy.sh setup)
 ./terminator --always-call-webhook
+
+# change the notification throttle window (default 5)
+./terminator --notify-window 3
 ```
+
+## Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--interval` | `1m` | How long to wait between checks |
+| `--config` | `config.yaml` | Path to config file |
+| `--always-call-webhook` | `false` | Call webhook on every check, not just on success (for testing) |
+| `--notify-window` | `5` | Throttle window for success notifications (see below) |
+
+## Notification throttling
+
+To avoid spamming your phone when slots are persistently available, notifications are throttled:
+
+- First **N** consecutive successes → bell + webhook fires normally
+- Next **N** consecutive successes → suppressed (logged but no notification sent)
+- After that → resets, sends one notification, and the cycle repeats
+
+N is controlled by `--notify-window` (default `5`). Any failure resets the counter.
 
 ## How it works
 
@@ -91,8 +113,8 @@ On each check, the tool:
 
 1. Opens a headless Chrome browser and navigates to the Berlin appointment service
 2. Reads the page state (`body.id`, HTTP status, headline)
-3. If the page is the "no slots" page (`body.id="taken"`) or returns 429 — waits and retries
-4. Anything else (2xx status, unknown page) is treated as a potential slot: logs loudly, rings the terminal bell, and calls the webhook
+3. Known failures: `body.id="taken"` (no slots), HTTP 429 (rate limited), or "Wartung" headline (maintenance) — waits and retries
+4. `body.id="dayselect"` (calendar with open slots) → logs loudly, rings the terminal bell, and calls the webhook (subject to throttling)
 
 ## Running on a server (tmux)
 
