@@ -35,7 +35,7 @@ GOARCH=arm64 GOOS=linux go build -o terminator .
 
 ## Configuration
 
-Copy and edit `config.yaml`:
+Edit `config.yaml`:
 
 ```yaml
 webhook_url: "https://your-webhook-url"
@@ -47,7 +47,27 @@ The webhook receives a plain-text `POST` with body:
 Found an Appointment, check https://service.berlin.de/dienstleistung/351180/
 ```
 
-Leave `webhook_url` empty or omit the file entirely to disable the webhook.
+Leave `webhook_url` empty or omit the file to disable the webhook.
+
+### Recommended: ntfy.sh for phone notifications
+
+[ntfy.sh](https://ntfy.sh) is a free, no-signup push notification service. When terminator fires the webhook, you get an instant notification on your phone.
+
+1. Install the [ntfy app](https://ntfy.sh/#subscribe) on your phone (Android/iOS)
+2. Subscribe to a topic — pick any unique name, e.g. `myname-berlin-termin`
+3. Set the webhook URL in `config.yaml`:
+
+```yaml
+webhook_url: "https://ntfy.sh/myname-berlin-termin"
+```
+
+4. Test it:
+
+```bash
+./terminator --always-call-webhook --interval 5s
+```
+
+Your phone should buzz within seconds.
 
 ## Usage
 
@@ -61,7 +81,7 @@ Leave `webhook_url` empty or omit the file entirely to disable the webhook.
 # custom config file
 ./terminator --config /path/to/config.yaml
 
-# test your webhook is working (calls it on every check)
+# test your webhook on every check (useful for verifying ntfy.sh setup)
 ./terminator --always-call-webhook
 ```
 
