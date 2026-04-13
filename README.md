@@ -81,6 +81,9 @@ Your phone should buzz within seconds.
 # custom config file
 ./terminator --config /path/to/config.yaml
 
+# show the browser window (useful for debugging)
+./terminator --show-browser
+
 # test your webhook on every check (useful for verifying ntfy.sh setup)
 ./terminator --always-call-webhook
 
@@ -94,6 +97,7 @@ Your phone should buzz within seconds.
 |---|---|---|
 | `--interval` | `1m` | How long to wait between checks |
 | `--config` | `config.yaml` | Path to config file |
+| `--show-browser` | `false` | Show the browser window (useful for debugging) |
 | `--always-call-webhook` | `false` | Call webhook on every check, not just on success (for testing) |
 | `--notify-window` | `5` | Throttle window for success notifications (see below) |
 
@@ -111,7 +115,7 @@ N is controlled by `--notify-window` (default `5`). Any failure resets the count
 
 On each check, the tool:
 
-1. Opens a headless Chrome browser and navigates to the Berlin appointment service
+1. Opens Chrome (headless by default; use `--show-browser` to watch it), navigates to the Berlin appointment service, and clicks through to the Mitte booking page
 2. Reads the page state (`body.id`, HTTP status, headline)
 3. Known failures: `body.id="taken"` (no slots), HTTP 429 (rate limited), or "Wartung" headline (maintenance) — waits and retries
 4. `body.id="dayselect"` (calendar with open slots) → logs loudly, rings the terminal bell, and calls the webhook (subject to throttling)
