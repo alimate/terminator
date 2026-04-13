@@ -21,7 +21,6 @@ import (
 
 const (
 	serviceURL = "https://service.berlin.de/dienstleistung/351180/"
-	mitteURL   = "https://service.berlin.de/terminvereinbarung/termin/tag.php?id=4126&anliegen[]=351180&termin=1&dienstleister=351636&anliegen[]=351180"
 )
 
 type Config struct {
@@ -107,6 +106,7 @@ func main() {
 	configFile        := flag.String("config", "config.yaml", "path to config file")
 	alwaysCallWebhook := flag.Bool("always-call-webhook", false, "call webhook on every check (useful for testing)")
 	notifyWindow      := flag.Int("notify-window", 5, "suppress notifications after this many consecutive successes; re-notify after the same count")
+	showBrowser       := flag.Bool("show-browser", false, "show the browser window (useful for debugging)")
 	flag.Parse()
 
 	var cfg *Config
@@ -121,8 +121,9 @@ func main() {
 
 	opts := chromedp.DefaultExecAllocatorOptions[:]
 	opts = append(opts,
-		chromedp.Flag("headless", true),
-		chromedp.UserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+		chromedp.Flag("headless", !*showBrowser),
+		chromedp.Flag("disable-blink-features", "AutomationControlled"),
+		chromedp.UserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"),
 	)
 
 	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
@@ -156,11 +157,17 @@ func snipe(ctx context.Context, retryEvery time.Duration, cfg *Config, alwaysCal
 			}
 		})
 
+		const mitteBtn = `#service_locationlist_checkboxgroup > fieldset > div:nth-child(1) > ul:nth-child(6) > li:nth-child(2) > div.listitem__footer > div > a`
+
 		var bodyID, currentURL, headline string
 		err := chromedp.Run(ctx,
 			network.Enable(),
+			chromedp.Evaluate(`Object.defineProperty(navigator, 'webdriver', {get: () => undefined})`, nil),
 			chromedp.Navigate(serviceURL),
-			chromedp.Navigate(mitteURL),
+			chromedp.Sleep(2*time.Second),
+			chromedp.ScrollIntoView(mitteBtn, chromedp.ByQuery),
+			chromedp.Sleep(500*time.Millisecond),
+			chromedp.Click(mitteBtn, chromedp.ByQuery),
 			chromedp.Evaluate("document.body.id", &bodyID),
 			chromedp.Evaluate("window.location.href", &currentURL),
 			chromedp.ActionFunc(func(ctx context.Context) error {
@@ -188,7 +195,7 @@ func snipe(ctx context.Context, retryEvery time.Duration, cfg *Config, alwaysCal
 
 			is2xx     := status >= 200 && status < 300
 			isWartung := strings.Contains(headline, "Wartung")
-			known     := status == 429 || bodyID == "taken" || isWartung
+			known     := status == 429 || status == 403 || bodyID == "taken" || isWartung
 			success   := is2xx && bodyID == "dayselect"
 
 			switch {
